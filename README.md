@@ -1,6 +1,6 @@
 # Functional Inference of Gene Regulation (FigR)
 
-Core code associated with manuscript detailing scATAC and scRNA-seq integration worflow
+Core code associated with manuscript (coming soon!) detailing scATAC and scRNA-seq integration worflow
 
 FigR is a computational framework for supporting the integration of single cell chromatin accessibility and gene expression data to infer transcriptional regulators of target genes
 
@@ -10,8 +10,13 @@ i) computationally-pair scATAC-seq and scRNA-seq datasets (if needed), ii) infer
 
 1. OptMatch pairing of scATAC and scRNA-seq cells
 
+Optimal ATAC-RNA cell matching to accurately pair imbalanced, independently generated scATAC and scRNA-seq datasets for downstream integration and analyses 
+
 2. Determining domains of regulatory chromatin (DORCs) using paired scATAC-seq scRNA-seq information
+
+*Cis*-regulatory correlation analysis framework to identify gene-peak (chromatin accessibility peak) significant associations and deduce key genes that are domains of such regulatory activity (DORCs)
 
 3. Using FigR to determine transcriptional activators and repressors of target genes
 
-![FigR overview](./extra/test.JPG?raw=true "FigR overview")
+Core component for functional inference of gene regulation using DORCs and TF motifs, to identify putative TF activators and regulators of gene activity
+
