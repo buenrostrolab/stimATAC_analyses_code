@@ -14,4 +14,6 @@ i) computationally-pair scATAC-seq and scRNA-seq datasets (if needed), ii) infer
 
 3. Using FigR to determine transcriptional activators and repressors of target genes
 
+![FigR ](https://github.com/buenrostrolab/stimATAC_analyses_code/tree/master/extra/FigR.png?raw=true)
+
 
