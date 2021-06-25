@@ -14,4 +14,4 @@ i) computationally-pair scATAC-seq and scRNA-seq datasets (if needed), ii) infer
 
 3. Using FigR to determine transcriptional activators and repressors of target genes
 
-![FigR overview](../extra/FigR.PNG?raw=true "FigR overview")
+![FigR overview](/extra/test.jpg?raw=true "FigR overview")
