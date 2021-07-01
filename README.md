@@ -12,6 +12,8 @@ i) computationally-pair scATAC-seq and scRNA-seq datasets (if needed), ii) infer
 
 Optimal ATAC-RNA cell matching to accurately pair imbalanced, independently generated scATAC and scRNA-seq datasets for downstream integration and analyses 
 
+![pairing](images/OptMatch.PNG)
+
 2. Determining domains of regulatory chromatin (DORCs) using paired scATAC-seq scRNA-seq information
 
 *Cis*-regulatory correlation analysis framework to identify gene-peak (chromatin accessibility peak) significant associations and deduce key genes that are domains of such regulatory activity (DORCs)
