@@ -27,5 +27,5 @@ Optimal ATAC-RNA cell matching to accurately pair imbalanced, independently gene
 Core component for functional inference of gene regulation using DORCs and TF motifs, to identify putative TF activators and regulators of gene activity
 
 <p align="center">
-<img src="images/FigR.PNG" height="60%" width="60%">
+<img src="images/FigR.PNG" height="50%" width="50%">
 </p>
