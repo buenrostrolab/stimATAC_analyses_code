@@ -18,11 +18,14 @@ Optimal ATAC-RNA cell matching to accurately pair imbalanced, independently gene
 
 *Cis*-regulatory correlation analysis framework to identify gene-peak (chromatin accessibility peak) significant associations and deduce key genes that are domains of such regulatory activity (DORCs)
 
-<img src="images/DORCs.PNG" height="70%" width="70%" align="center">
+<p align="center">
+<img src="images/DORCs.PNG" height="70%" width="70%">
+</p>
 
 3. Using FigR to determine transcriptional activators and repressors of target genes
 
 Core component for functional inference of gene regulation using DORCs and TF motifs, to identify putative TF activators and regulators of gene activity
 
-![FigR](images/FigR.PNG)
-
+<p align="center">
+<img src="images/FigR.PNG" height="60%" width="60%">
+</p>
