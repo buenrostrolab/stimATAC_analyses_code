@@ -1,67 +1,25 @@
-splitAndFetch <- function(vec,
-                          delim,
-                          part){
-  if(length(part)==1){
-    sapply(strsplit(as.character(vec),delim,fixed=TRUE),"[[",part) } else {
-      sapply(strsplit(as.character(vec),delim,fixed = TRUE),function(x) paste(x[part],collapse = delim))
-    }
-}
+# Script housing main DORC functions
 
-centerCounts <- function(obj,
-                         doInChunks=TRUE,
-                         chunkSize=1000){
-  if(!class(obj) %in% c("SummarizedExperiment","RangedSummarizedExperiment","dgCMatrix","dgeMatrix","Matrix"))
-    stop("Supplied object must be either of class SummarizedExperiment or sparse Matrix ..\n")
-  
-  if(ncol(obj) > 10000)
-    doInChunks <- TRUE
-  
-  if(doInChunks){
-    cat("Centering counts for cells sequentially in groups of size ",
-        chunkSize, " ..\n\n")
-    starts <- seq(1,ncol(obj),chunkSize)
-  } else{
-    starts <- 1
-  }
-  
-  counts.l <- list()
-  
-  for(i in 1:length(starts)){
-    beginning <- starts[i]
-    if(i==length(starts)) # If it's the last one
-    {
-      ending <- ncol(obj)
-    } else {
-      ending <- starts[i]+chunkSize-1
-    }
-    
-    cat("Computing centered counts for cells: ",beginning," to ", ending,"..\n")
-    
-    if(class(obj) == "RangedSummarizedExperiment" | class(obj)=="SummarizedExperiment"){
-      m <- SummarizedExperiment::assay(obj[, beginning:ending])} else {
-        m <- obj[,beginning:ending] # Assumes Matrix format
-      }
-    cellMeans <- Matrix::colMeans(m)
-    cat("Computing centered counts per cell using mean reads in features ..\n\n")
-    # Center cell counts based on its mean RIP count
-    cCounts <- Matrix::t(Matrix::t(m)/cellMeans)
-    
-    counts.l[[i]] <- cCounts
-    
-    gc()
-  }
-  
-  cat("Merging results..\n")
-  centered.counts <- do.call("cbind",counts.l)
-  cat("Done!\n")
-  
-  if(class(obj) == "RangedSummarizedExperiment" | class(obj)=="SummarizedExperiment"){
-    SummarizedExperiment::assay(obj) <- centered.counts
-    return(obj)
-  } else {
-    return(centered.counts)
-  }
-}
+### Author: Vinay Kartha
+### Contact: <vinay_kartha@g.harvard.edu>
+### Affiliation: Buenrostro Lab, Department of Stem Cell and Regenerative Biology, Harvard University
+
+
+setwd("<data_analysis_folder>")
+source("./code/utils.R")
+
+load("./data/hg19_refSeq.Rdata")
+load("./data/mm10_refSeq.Rdata")
+
+library(parallel)
+library(foreach)
+library(chromVAR)
+library(Matrix)
+library(matrixStats)
+library(dplyr)
+library(pbmcapply)
+library(SummarizedExperiment)
+library(GenomicRanges)
 
 chunkCore <- function(chunk,
                       A, # ATAC matrix
@@ -94,7 +52,7 @@ PeakGeneCor <- function(ATAC, # Normalized reads in peaks counts (rownames shoul
                         RNA, # Normalized gene expression counts
                         OV, # Gene TSS - Peak overlap pairs object (Genes: query, Peaks: subject)
                         ncores=4,
-                        chunkSize=1000,
+                        chunkSize=200,
                         metric="spearman",
                         bg=NULL){
   
@@ -168,30 +126,16 @@ PeakGeneCor <- function(ATAC, # Normalized reads in peaks counts (rownames shoul
   return(OVd)
 }
 
-#' Gene-Peak correlations used for calling domains of regulatory chromatin (DORCs)
-#'
-#'Function to compute correlation between RNA expression and peak accessibility for peaks falling within a window around each gene, across single cells, using background peak correlations for significance testing
-#'@param ATAC.se SummarizedExperiment object of the scATAC-seq reads in peak counts.
-#'@param RNAmat Matrix object of the normalized scRNA-seq counts. For example, this will be the count data housed within the `@assays$RNA@data` field if processed using Seurat. Must have same number of cells (i.e. matched) with the scATAC-seq data
-#'@param genome character specifying the reference genome build to use. Must be one of "hg19", "hg38" or "mm10", with no default
-#'@param TSSwindow numeric specifying the window size (in base pairs) to pad around either side of each TSS, to fetch overlapping peaks. Default is 50 kb (so 100 kb window is drawn arund each TSS)
-#'@param normalizeATACmat boolean indicating whether or not to normalize the counts present in the ATAC.se object prior to computing correlations. Default is TRUE (i.e. assumes peak counts in ATAC.se are raw).
-#'@param n_bg numeric indicating the number of background correlations to compute per gene-peak pair. Default is 100 (increasing this can significantly increase run time)
-#'@param p.cut numeric indicating p-value cut-off to apply to gene-peak correlations. Default is NULL (i.e. don't apply any filtering of results). Good option is to set to 0.05.
-#'@param nCores numeric indicating the number of cores to use if parallelizing tasks
-#'@return a data.frame of correlations for each gene-peak overlap pair, with the observed correlation level and significance p-value based on background correlations per pair
-#'@import Matrix dplyr pbmcapply SummarizedExperiment GenomicRanges
-#'@export
-#'@author Vinay Kartha
-runGenePeakcorr <- function(ATAC.se,
-                            RNAmat,
+# Main wrapper function
+runGenePeakcorr <- function(ATAC.se, # SummarizedExperiment object of scATAC data
+                            RNAmat, # Paired normalized scRNA-seq data, with gene names as rownames
                             genome, # Must be one of "hg19", "mm10", or "hg38"
-                            geneList=NULL, # 2 or more valid gene symbols
-                            windowPadSize=50000,
-                            normalizeATACmat=TRUE,
-                            nCores=4,
-                            n_bg=100,
-                            p.cut=NULL # Optional, if specified, will only return sig hits
+                            geneList=NULL, # 2 or more valid gene symbols (if only running on subset of genes)
+                            windowPadSize=50000, # base pairs padded on either side of gene TSS
+                            normalizeATACmat=TRUE, # Whether or not to normalize scATAC counts (default is yes, assumes raw counts)
+                            nCores=4, # Number of cores if parallelization support
+                            n_bg=100, # Number of background peaks to use
+                            p.cut=NULL # Optional, if specified, will only return sig peak-gene hits
 ) {
   
   stopifnot(inherits(ATAC.se,"RangedSummarizedExperiment"))
@@ -318,10 +262,10 @@ runGenePeakcorr <- function(ATAC.se,
   
   cat("Computing gene-peak correlations ..\n")
   
-  pairsPerChunk <- 1000
+  pairsPerChunk <- 200
   
   # This defines the outer (larger chunks)
-  largeChunkSize <- 20000
+  largeChunkSize <- 1000
   
   startingPoint <- 1 # If for any reason the workers fail, resume from where it failed by specifying the starting point here
   chunkStarts <- seq(startingPoint, numPairs, largeChunkSize)
@@ -384,3 +328,6 @@ runGenePeakcorr <- function(ATAC.se,
   
   return(as.data.frame(dorcTabFilt[,c("Peak","Gene","rObs","pvalZ")],stringsAsFactors=FALSE))
 }
+
+
+

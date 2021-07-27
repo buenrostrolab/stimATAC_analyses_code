@@ -1,13 +1,26 @@
-library(BuenRTools)
+# Script housing main FigR wrapper functions
+
+### Author: Vinay Kartha
+### Contact: <vinay_kartha@g.harvard.edu>
+### Affiliation: Buenrostro Lab, Department of Stem Cell and Regenerative Biology, Harvard University
+
 library(ggplot2)
 library(ggrepel)
+library(reshape2)
 library(ggrastr)
 library(BuenColors)
+library(ComplexHeatmap)
+library(circlize)
+library(networkD3)
+library(GGally)
+library(igraph)
+library(network)
+
+setwd("<data_analysis_folder>")
+source("./code/utils.R")
 
 # ---------------------------------------------------------------------------------- FUNCTION DEFINITIONS
 
-# Main FigR wrapper function
-# Author Vinay Kartha <vinay_kartha@g.harvard.edu>
 runFigR <- function(ATAC.se, # SE of scATAC peak counts. Needed for chromVAR bg peaks etc.
                     dorcK=30, # How many dorc kNNs are we using to pool peaks
                     dorcTab, # peak x DORC connections (should contain indices relative to peaks in ATAC.se)
@@ -70,14 +83,15 @@ runFigR <- function(ATAC.se, # SE of scATAC peak counts. Needed for chromVAR bg 
   
   if(grepl("hg",genome)){
     #pwm <- chromVARmotifs::human_pwms_v2
-    pwm <- readRDS("/mnt/users/yanhu/cell_dynamics/repository_GMP/cell_dynamics_GMP/data/cisBP_human_pfms_2021.rds")
+    pwm <- readRDS("./data/cisBP_human_pfms_2021.rds")
   } else {
-    pwm <- BuenRTools::mouse_pwms_v3
+    #pwm <- BuenRTools::mouse_pwms_v3
+    pwm <- readRDS("./data/cisBP_mouse_pfms_2021.rds")
   }
   
   # Old motif naming convention
   if(all(grepl("_",names(pwm),fixed = TRUE)))
-     names(pwm) <- BuenRTools::extractTFNames(names(pwm))
+     names(pwm) <- extractTFNames(names(pwm))
   
   message("Removing genes with 0 expression across cells ..\n")
   rnaMat <- rnaMat[Matrix::rowSums(rnaMat)!=0,]
@@ -155,88 +169,14 @@ runFigR <- function(ATAC.se, # SE of scATAC peak counts. Needed for chromVAR bg 
   TFenrich.d <- do.call('rbind',mZtest.list)
   dim(TFenrich.d)
   rownames(TFenrich.d) <- NULL
-  # Sign log FDRs
-  # TFenrich.d <- TFenrich.d %>% group_by(DORC) %>%
-  #   mutate(Enrichment.log10FDR=-log10(p.adjust(Enrichment.P,method="fdr"))*sign(Enrichment.Z), # Signed log10 FDR
-  #          Corr.log10FDR=-log10(p.adjust(Corr.P,method="fdr"))*sign(Corr), # Signed log10 FDR
-  #   ) %>% as.data.frame(stringsAsFActors=FALSE)
   
-  
-  # Make combined score based on multiplication (from JDB)
+  # Make combined score based on multiplication
   # Here, we only sign by corr
   # Since sometimes we lose digit precision (1 - v small number is 1, instead of 0.9999999..)
   # Use Rmpfr, increase precision limits above default (100 here)
   TFenrich.d <- TFenrich.d %>% mutate("Score"=sign(Corr)*as.numeric(-log10(1-(1-Rmpfr::mpfr(Enrichment.P,100))*(1-Rmpfr::mpfr(Corr.P,100)))))
   TFenrich.d$Score[TFenrich.d$Enrichment.Z < 0] <- 0
   TFenrich.d
-}
-
-# Template for making widget for network plotting
-filter_samples_gadget <- function(depths, 
-                                  fragments_per_sample, 
-                                  min_in_peaks, 
-                                  min_depth, 
-                                  sample_names) {
-  
-  ui <- miniPage(
-    gadgetTitleBar("Adjust parameters to change filtering"), 
-    fillCol(
-      flex = c(1,3), 
-      fillRow(flex = c(1, 1), 
-              sliderInput("min_in_peaks", 
-                          "Minimum fraction of fragments in peaks:", 
-                          min = 0,
-                          max = 1, 
-                          value = min_in_peaks), 
-              numericInput("min_depth", 
-                           "Minimum total reads:", 
-                           min = 0, 
-                           max = max(depths), 
-                           value = min_depth)), 
-      plotlyOutput("plot", height = "100%")
-    )
-  )
-  
-  server <- function(input, output, session) {
-    
-    keep_samples <- 
-      reactive(
-        intersect(which(depths >= input$min_depth),
-                  which(fragments_per_sample/depths >= input$min_in_peaks)))
-    
-    # Render the plot
-    output$plot <- renderPlotly({
-      tmp_df <- 
-        data.frame(x = depths, 
-                   y = fragments_per_sample/depths,
-                   pass_filter = (seq_along(fragments_per_sample) %in% 
-                                    keep_samples()), name = sample_names)
-      p <- ggplot(tmp_df, aes_string(x = "x", y = "y", col = "pass_filter", 
-                                     text = "name")) + 
-        geom_point() + 
-        xlab("Number of fragments") + 
-        ylab("Proportion of fragments in peaks") + 
-        scale_x_log10() +
-        scale_y_continuous(expand = c(0, 0), 
-                           limits = c(0, min(1, max(tmp_df$y) * 1.2))) +
-        scale_color_manual(name = "Pass?", 
-                           values = c("gray", "black"), breaks = c(TRUE, FALSE),
-                           labels = c("Yes","No")) + chromVAR_theme()
-      p <- p + 
-        geom_hline(yintercept = input$min_in_peaks, col = "red", lty = 2) + 
-        geom_vline(xintercept = input$min_depth, col = "red", lty = 2)
-      ggplotly(p)
-      p
-    })
-    
-    # Handle the Done button being pressed.
-    observeEvent(input$done, {
-      stopApp(list(keep = keep_samples(), min_in_peaks = input$min_in_peaks, 
-                   min_depth = input$min_depth))
-    })
-  }
-  
-  runGadget(ui, server)
 }
 
 
@@ -337,8 +277,6 @@ plotfigRHeatmap <- function(figR.d,
   message("Plotting ",nrow(net.d)," DORCs x ",ncol(net.d), "TFs\n")
   
   # Heatmap view
-  library(ComplexHeatmap)
-  library(circlize)
   
   myCols <- colorRamp2(seq(-2,2,length.out = 9),colors = jdb_palette("solar_flare"))
   myHeat <- Heatmap(net.d,
@@ -358,7 +296,6 @@ plotfigRNetwork <- function(figR.d,
                         TFs=NULL,
                         weight.edges=FALSE){
 # Network view
-library(networkD3)
 
 # Filter
 net.dat <-  figR.d %>% filter(abs(Score) >= score.cut)
@@ -387,7 +324,6 @@ links <- data.frame(source=unlist(lapply(edges$Motif, function(x) {which(nodes$n
 
 links$Value <- scales::rescale(edges$Score)*20
 
-# From Andrew
 # Set of colors you can choose from for TF/DORC nodes
 colors <- c("Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Tomato", "Forest Green", "Sky Blue","Gray","Steelblue3","Firebrick2","Brown")
 nodeColorMap <- data.frame(color = colors, hex = gplots::col2hex(colors))
@@ -403,7 +339,6 @@ getColors <- function(tfColor, dorcColor = NULL) {
   colorJS
 }
 
-# Adapted from Andrew
 forceNetwork(Links = links, 
              Nodes = nodes,
              Source = "target",
@@ -428,96 +363,3 @@ forceNetwork(Links = links,
                                  as.character(nodeColorMap[nodeColorMap$color=="Purple",]$hex)))
 
 }
-
- 
-
-runTest <- FALSE
-if(runTest){
-# ---------------------------------------------------------------------------------- TRISTAN SHARE-SEQ data
-
-share.se <- readRDS("/mnt/users/ttay/Analysis/210425_AZ_deepseq/AZ.intersectSE.stim.rds")
-table(Matrix::rowSums(assay(share.se))==0)
-
-rnaMat <- readRDS("/mnt/users/ttay/Analysis/210425_AZ_deepseq/AZ.intersectSeurat.stim.rds")
-rnaMat <- rnaMat@assays$SCT@data
-
-dorcMat <- readRDS("/mnt/users/ttay/Analysis/210425_AZ_deepseq/dorcScores.stim.rds")
-stopifnot(all.equal(colnames(dorcMat),colnames(share.se)))
-
-combined.seu <- readRDS("/mnt/users/ttay/Analysis/210425_AZ_deepseq/AZ.WNN.combinedSeuset.stim.rds")
-
-WNN.mat <- combined.seu@neighbors$weighted.nn@nn.idx 
-dim(WNN.mat)
-
-
-# ---------------------------------------------------------------------------------- DETERMINE DORCS
-
-peak2geneCorr <- readRDS("/mnt/users/ttay/Analysis/210425_AZ_deepseq/testDorc.stim.rds")
-max(peak2geneCorr$pvalZ)
-
-peak2geneCorr.filt <- peak2geneCorr %>% filter(pvalZ <= 0.05)
-max(peak2geneCorr.filt$pvalZ)
-
-myDORCGenes <- dorcJPlot(dorcTab = peak2geneCorr.filt,
-                         cutoff = 10,
-                         labelTop = 20,
-                         returnGeneList = TRUE,
-                         force=2)
-
-length(myDORCGenes)
-head(myDORCGenes)
-
-
-# ---------------------------------------------------------------------------------- SMOOTH SCORES 
-
-rownames(WNN.mat) <- colnames(dorcMat)
-dorcMat.smoothed <- smoothGeneScoresNN(NNmat = WNN.mat,geneList = myDORCGenes,TSSmat = dorcMat,nCores = 4)
-
-rownames(WNN.mat) <- colnames(rnaMat)
-rnaMat <- rnaMat[Matrix::rowSums(rnaMat)!=0,]
-rnaMat.smoothed <- smoothGeneScoresNN(NNmat = WNN.mat,TSSmat = rnaMat,nCores = 8)
-
-# ---------------------------------------------------------------------------------- RUN FIGR
-
-enrich.d <- runFigR(ATAC.se = share.se,
-                    dorcTab = peak2geneCorr.filt,
-                    genome = "hg19",
-                    n_bg = 50,
-                    dorcMat = dorcMat.smoothed,
-                    rnaMat = rnaMat.smoothed,
-                    dorcGenes = myDORCGenes,
-                    nCores = 4)
-
-saveRDS(enrich.d,"/mnt/users/ttay/Analysis/210425_AZ_deepseq/GRN/AZ_TF_DORC_enrich.rds")
-
-# All by all
-library(ggrastr)
-library(BuenColors)
-ggplot(enrich.d,aes(Corr.log10P,Enrichment.log10P,color=Score)) + 
-  geom_point_rast(size=0.1) + 
-  theme_classic() + 
-  scale_color_gradientn(colours = jdb_palette("solar_extra"))
-
-# Specific drivers
-plotDrivers(figR.d = enrich.d,marker = "IL10")
-
-# ---------------------------------------------------------------------------------- VISUALIZE TOP HITS
-
-# Load DE DORC list
-
-DE_dorcs <- readRDS("/mnt/users/ttay/Analysis/210425_AZ_deepseq/AZ.DE.dorclist.rds")
-length(DE_dorcs)
-
-# Heatmap of TF x DORC (subsetting to sig connections and only DORCs of interest and their associated TFs)
-pdf("/mnt/users/ttay/Analysis/210425_AZ_deepseq/GRN/AZ_TF_DORC_heat_DE_DORCs.pdf",height = 9,width = 6)
-plotfigRHeatmap(enrich.d,DORCs = DE_dorcs,score.cut = 1,column_names_gp = gpar(fontsize=5),border=TRUE)
-dev.off()
-
-# Rank TFs based on mean regulation score across all DORCs
-rankDrivers(enrich.d)
-
-# Plot network
-plotfigRNetwork(enrich.d,score.cut = 1,DORCs = DE_dorcs)
-
-}
-

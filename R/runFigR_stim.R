@@ -1,37 +1,43 @@
-# Script to run FigR on stim data using new human motif database
+# Script to run core FigR function on stimulation data using new human motif database
 
-setwd("/mnt/Analyses/biorad/stim_06_17_2019/")
+### Author: Vinay Kartha
+### Contact: <vinay_kartha@g.harvard.edu>
+### Affiliation: Buenrostro Lab, Department of Stem Cell and Regenerative Biology, Harvard University
+
+setwd("<data_analysis_folder>")
+
+
 source("./code/FigR_functions.R")
 
 
-# ---------------------------------------------------------------------------------- NEW PWM (thanks Yan!)
+# ---------------------------------------------------------------------------------- NEW PWM
 
-human_pwms_v3 <- readRDS("/mnt/users/yanhu/cell_dynamics/repository_GMP/cell_dynamics_GMP/data/cisBP_human_pfms_2021.rds")
+human_pwms_v3 <- readRDS("./data/cisBP_human_pfms_2021.rds")
 human_pwms_v3
 
 
 # ---------------------------------------------------------------------------------- Load stim data / DORC calls
 # Load SE object
-SE.filt <- readRDS("./data_freeze_10_16_2020/SE/ATAC_stim_paired.rds")
+SE.filt <- readRDS("./data/SE/ATAC_stim_paired.rds")
 SE.filt
 
 # DORC calls, all cells
-sigGP <- read.table("./data_freeze_10_16_2020/DORCs/DORC_calls_stim_allCells_0.05.tsv",header=TRUE,stringsAsFactors = FALSE,sep="\t")
+sigGP <- read.table("./data/DORCs/DORC_calls_stim_allCells_0.05.tsv",header=TRUE,stringsAsFactors = FALSE,sep="\t")
 
 # # Only work in space of DORC genes
-dorcGenes <- readRDS("./data_freeze_10_16_2020/DORCs/dorcGenes.rds")
+dorcGenes <- readRDS("./data/DORCs/dorcGenes.rds")
 sigGP <- sigGP[sigGP$Gene %in% dorcGenes,]
 
 dim(sigGP)
 
 # Normalized counts from SEs
 # Load paired RNA
-RNA.SE <- readRDS("./data_freeze_10_16_2020/SE/RNA_stim_paired.rds")
+RNA.SE <- readRDS("./data/SE/RNA_stim_paired.rds")
 names(assays(RNA.SE))
 rnaMat <- assays(RNA.SE)$counts.norm
 rownames(rnaMat) <- gsub(x=rownames(rnaMat),pattern = "-",replacement = "",fixed = TRUE)
 
-DORC.SE <- readRDS("./data_freeze_10_16_2020/SE/ATAC_stim_DORC_prom_enhancer_scores.rds")
+DORC.SE <- readRDS("./data/SE/ATAC_stim_DORC_prom_enhancer_scores.rds")
 names(assays(DORC.SE))
 
 DORC.SE <- DORC.SE[,colnames(SE.filt)] # Subset to paired cells only
@@ -40,7 +46,7 @@ dorcMat <- assays(DORC.SE)$P + assays(DORC.SE)$E
 dim(dorcMat)
 
 # ---------------------------------------------------------------------------------- Smooth data
-lsi <- read.table("./data_freeze_10_16_2020/ArchR/scATAC_stim_LSI.tsv",sep="\t",header=TRUE,stringsAsFactors=FALSE,row.names = 1)
+lsi <- read.table("./data/ArchR/scATAC_stim_LSI.tsv",sep="\t",header=TRUE,stringsAsFactors=FALSE,row.names = 1)
 head(lsi)
 
 stopifnot(all(colnames(DORC.SE) %in% rownames(lsi)))
@@ -62,22 +68,19 @@ gc()
 # Just so that the smoothing function will work, since it checks for matching attributes
 rownames(lsi.knn) <- colnames(RNA.SE)
 # Run only on TFs to save time
-rnaMat.smoothed <- smoothGeneScoresNN(NNmat = lsi.knn,TSSmat = rnaMat,nCores = 6,geneList=intersect(rownames(rnaMat),names(human_pwms_v3)))
+rnaMat.smoothed <- smoothScoresNN(NNmat = lsi.knn,TSSmat = rnaMat,nCores = 6,geneList=intersect(rownames(rnaMat),names(human_pwms_v3)))
 gc()
 
-# ---------------------------------------------------------------------------------- Run FigR, using new database
+# ---------------------------------------------------------------------------------- Run FigR
 
 stim_FigR_newDB <- runFigR(ATAC.se = SE.filt,
                            dorcK = 30,
                            dorcTab = sigGP,
-                           genome = "hg19", # Inside the runFigR function, we load the new motif DB instead of the chromVAR one
+                           genome = "hg19", 
                            dorcMat = dorcMat.smoothed,
                            rnaMat = rnaMat.smoothed,
                            n_bg = 50,
                            nCores = 8)
-
-# Save results
-saveRDS(stim_FigR_newDB,"./data_freeze_10_16_2020/TFnetwork/DORC_motif_enrich_k_30_newCisBP.rds")
 
 library(ggplot2)
 library(ggrastr)
@@ -110,7 +113,6 @@ figR_heat <- plotfigRHeatmap(figR.d = stim_FigR_newDB,
                              show_row_dend = FALSE,
                              row_names_side = "left")
 
-library(circlize)
 
 myDORCs <- stim_FigR_newDB %>% filter(abs(Score)>=1.5 & DORC %in% SNPDORCs) %>% pull(DORC) %>% unique()
 myDORCs <- sort(myDORCs) # Has to be the same input as would be for main dorc heatmap (alphabetically sorted since we use reshape)
@@ -133,12 +135,10 @@ SNP_heat <- Heatmap(as.matrix(SNPPmat[sort(myDORCs),]),
 SNP_heat
 
 ht_list <- figR_heat + SNP_heat
-pdf("./data_freeze_10_16_2020/figures/figR/DORC_SNP_TFdriver_heat_newcisBP.pdf",width = 6*1.5,3.1*1.5)
 draw(ht_list)
-dev.off()
 
 # Load DORC list (based on peak Ov) per disease
-dorc.list <- readRDS("./data_freeze_10_16_2020/DORCs/DORCs_Ov_per_disease.rds")
+dorc.list <- readRDS("./data/DORCs/DORCs_Ov_per_disease.rds")
 
 
 # Just SLE-implicated DORCs
@@ -154,9 +154,6 @@ plotfigRNetwork(stim_FigR_newDB,score.cut = 1.5,DORCs = dorc.list$SystemicLupusE
 
 
 # Using ggnet2
-library(GGally)
-library(igraph)
-library(network)
 
 lildat <- stim_FigR_newDB %>% filter(DORC %in% dorc.list$SystemicLupusErymatosus[!grepl("HLA",dorc.list$SystemicLupusErymatosus)]) %>% filter(abs(Score) >= 1.5)
 lildat$Motif <- paste0(lildat$Motif, ".")
@@ -167,7 +164,6 @@ net <- network(lildat[,c("Motif","DORC")],
                directed = TRUE,
                matrix.type="edgelist")
 
-#set.edge.value(x = net,attrname = "Corr",value = lildat$Corr)
 set.edge.value(x = net,attrname = "weight",value = lildat$weight)
 
 
@@ -182,7 +178,6 @@ set.edge.attribute(net, "color", ifelse(lildat$Corr > 0, "firebrick", "steelblue
 # set colors for each mode
 col = c("Motif" = "gray60", "DORC" = "sandybrown")
 
-pdf("./data_freeze_10_16_2020/figures/figR/DORC_SNP_TFdriver_newcisBP_SLE_net.pdf",height = 4,width = 5,useDingbats = FALSE)
 ggnet2(net = net,color.legend = "C",
        size.legend = "Degree",
        label = TRUE,
@@ -202,4 +197,3 @@ ggnet2(net = net,color.legend = "C",
        #arrow.gap = 0.025,
        legend.position = "none") + 
   coord_equal()
-dev.off()
