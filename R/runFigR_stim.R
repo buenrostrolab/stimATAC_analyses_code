@@ -9,13 +9,6 @@ setwd("<data_analysis_folder>")
 
 source("./code/FigR_functions.R")
 
-
-# ---------------------------------------------------------------------------------- NEW PWM
-
-human_pwms_v3 <- readRDS("./data/cisBP_human_pfms_2021.rds")
-human_pwms_v3
-
-
 # ---------------------------------------------------------------------------------- Load stim data / DORC calls
 # Load SE object
 SE.filt <- readRDS("./data/SE/ATAC_stim_paired.rds")
@@ -67,13 +60,14 @@ gc()
 
 # Just so that the smoothing function will work, since it checks for matching attributes
 rownames(lsi.knn) <- colnames(RNA.SE)
+
 # Run only on TFs to save time
 rnaMat.smoothed <- smoothScoresNN(NNmat = lsi.knn,TSSmat = rnaMat,nCores = 6,geneList=intersect(rownames(rnaMat),names(human_pwms_v3)))
 gc()
 
 # ---------------------------------------------------------------------------------- Run FigR
 
-stim_FigR_newDB <- runFigR(ATAC.se = SE.filt,
+stim_FigR <- runFigR(ATAC.se = SE.filt,
                            dorcK = 30,
                            dorcTab = sigGP,
                            genome = "hg19", 
@@ -85,18 +79,18 @@ stim_FigR_newDB <- runFigR(ATAC.se = SE.filt,
 library(ggplot2)
 library(ggrastr)
 library(BuenColors)
-gAll <- ggplot(stim_FigR_newDB,aes(Corr.log10P,Enrichment.log10P,color=Score)) + 
+gAll <- ggplot(stim_FigR,aes(Corr.log10P,Enrichment.log10P,color=Score)) + 
   geom_point_rast(size=0.01,shape=16) + 
   theme_classic() + 
   scale_color_gradientn(colours = jdb_palette("solar_extra"),limits=c(-4,4),oob = scales::squish)
 
 # Mean plot
 library(ggrepel)
-rankDrivers(figR.d = stim_FigR_newDB)
+rankDrivers(figR.d = stim_FigR)
 
-plotDrivers(figR.d = stim_FigR_newDB,marker = "MX1")
-plotDrivers(figR.d = stim_FigR_newDB,marker = "REL")
-plotDrivers(figR.d = stim_FigR_newDB,marker = "TRAF1")
+plotDrivers(figR.d = stim_FigR,marker = "MX1")
+plotDrivers(figR.d = stim_FigR,marker = "REL")
+plotDrivers(figR.d = stim_FigR,marker = "TRAF1")
 
 # Load DORC-implicated SNP P mat
 SNPPmat <- readRDS("./data_freeze_10_16_2020/GWAS/GWAS_DORC_SNPoV_unfiltered_P_mat.rds")
@@ -106,7 +100,7 @@ length(SNPDORCs)
 SNPPmat[SNPPmat > 30] <- 30 # Cap
 
 # Heatmap 
-figR_heat <- plotfigRHeatmap(figR.d = stim_FigR_newDB,
+figR_heat <- plotfigRHeatmap(figR.d = stim_FigR,
                              score.cut = 1.5,
                              DORCs = SNPDORCs,
                              column_names_gp=gpar(fontsize=5),
@@ -114,7 +108,7 @@ figR_heat <- plotfigRHeatmap(figR.d = stim_FigR_newDB,
                              row_names_side = "left")
 
 
-myDORCs <- stim_FigR_newDB %>% filter(abs(Score)>=1.5 & DORC %in% SNPDORCs) %>% pull(DORC) %>% unique()
+myDORCs <- stim_FigR %>% filter(abs(Score)>=1.5 & DORC %in% SNPDORCs) %>% pull(DORC) %>% unique()
 myDORCs <- sort(myDORCs) # Has to be the same input as would be for main dorc heatmap (alphabetically sorted since we use reshape)
 
 SNP_heat <- Heatmap(as.matrix(SNPPmat[sort(myDORCs),]),
@@ -142,7 +136,7 @@ dorc.list <- readRDS("./data/DORCs/DORCs_Ov_per_disease.rds")
 
 
 # Just SLE-implicated DORCs
-figR_heat_SLE <- plotfigRHeatmap(figR.d = stim_FigR_newDB,
+figR_heat_SLE <- plotfigRHeatmap(figR.d = stim_FigR,
                              score.cut = 1.5,
                              DORCs = dorc.list$SystemicLupusErymatosus[!grepl("HLA",dorc.list$SystemicLupusErymatosus)],
                              column_names_gp=gpar(fontsize=5),
@@ -150,12 +144,12 @@ figR_heat_SLE <- plotfigRHeatmap(figR.d = stim_FigR_newDB,
                              row_names_side = "left")
 
 # D3Network
-plotfigRNetwork(stim_FigR_newDB,score.cut = 1.5,DORCs = dorc.list$SystemicLupusErymatosus[!grepl("HLA",dorc.list$SystemicLupusErymatosus)])
+plotfigRNetwork(stim_FigR,score.cut = 1.5,DORCs = dorc.list$SystemicLupusErymatosus[!grepl("HLA",dorc.list$SystemicLupusErymatosus)])
 
 
 # Using ggnet2
 
-lildat <- stim_FigR_newDB %>% filter(DORC %in% dorc.list$SystemicLupusErymatosus[!grepl("HLA",dorc.list$SystemicLupusErymatosus)]) %>% filter(abs(Score) >= 1.5)
+lildat <- stim_FigR %>% filter(DORC %in% dorc.list$SystemicLupusErymatosus[!grepl("HLA",dorc.list$SystemicLupusErymatosus)]) %>% filter(abs(Score) >= 1.5)
 lildat$Motif <- paste0(lildat$Motif, ".")
 lildat$DORC <- paste0(lildat$DORC)
 lildat$weight <- scales::rescale(abs(lildat$Score),to=c(0.5,3))

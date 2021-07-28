@@ -20,6 +20,8 @@ library(dplyr)
 library(pbmcapply)
 library(SummarizedExperiment)
 library(GenomicRanges)
+library(ggplot2)
+library(ggrepel)
 
 chunkCore <- function(chunk,
                       A, # ATAC matrix
@@ -329,5 +331,53 @@ runGenePeakcorr <- function(ATAC.se, # SummarizedExperiment object of scATAC dat
   return(as.data.frame(dorcTabFilt[,c("Peak","Gene","rObs","pvalZ")],stringsAsFactors=FALSE))
 }
 
-
-
+# Function to make J plot of significant peak-gene assocoations to call DORCs using
+dorcJplot <- function(dorcTab, # table returned from runGenePeakcorr function
+                      cutoff=7, 
+                      labelTop=25,
+                      returnGeneList=FALSE, # Returns genes passing numPeak filter
+                      cleanLabels=TRUE,
+                      labelSize=4,
+                      ... # Additional params passed to ggrepel
+                      ){
+  
+  stopifnot(all(c("Peak","Gene","pvalZ") %in% colnames(dorcTab)))
+  
+  # Count the number of significant peak associations for each gene (without pre-filtering genes)
+  numDorcs <- dorcTab  %>% group_by(Gene) %>% tally() %>% arrange(desc(n))
+  numDorcs$Index <- 1:nrow(numDorcs) # Add order index
+  numDorcs %>% as.data.frame(stringsAsFactors=FALSE) -> numDorcs
+  rownames(numDorcs) <- numDorcs$Gene
+  
+  dorcGenes <- numDorcs$Gene[numDorcs$n >= cutoff]
+  
+  numDorcs <- numDorcs %>%
+    mutate(isDORC=ifelse(Gene %in% dorcGenes,"Yes","No")) %>%
+    mutate(Label=ifelse(Gene %in% dorcGenes[1:labelTop],Gene,""))
+  
+  # Plot
+  dorcG <- ggplot(numDorcs,aes(x=Index,y=n,color=isDORC,label=Label)) +
+    geom_hline(linetype="dotted",yintercept = cutoff)+
+    geom_vline(linetype="dotted",xintercept = max(numDorcs[numDorcs$Gene %in% dorcGenes,"Index"]))+
+    geom_point(size=0.8) +
+    geom_line()+
+    scale_color_manual(values=c("gray65","firebrick"))+
+    scale_y_continuous(breaks = scales::pretty_breaks())+
+    theme_classic() +
+    labs(y="Number of correlated peaks",x="Ranked genes",title=paste0("# DORCs: ( n >= ",cutoff,") = ",length(dorcGenes)))+
+    theme(axis.text = element_text(color = "black"),legend.position = "none",plot.title=element_text(hjust=0.5)) +
+    scale_x_reverse() # flip so we can add labels later, if needed, with more space
+  
+  if(cleanLabels){
+    dorcG <- dorcG + ggrepel::geom_label_repel(size=labelSize,max.iter = 100,max.overlaps = Inf,fontface="italic",...)
+  } else {
+    dorcG <- dorcG + ggplot2::geom_text(size=labelSize,fontface="italic",...)
+  }
+  
+  print(dorcG)
+  
+  if(returnGeneList)
+    return(dorcGenes)
+  
+  
+}
