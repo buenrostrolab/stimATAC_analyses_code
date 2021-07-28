@@ -1,6 +1,6 @@
 # Functional Inference of Gene Regulation (FigR)
 
-Core code associated with manuscript (coming soon!) detailing scATAC and scRNA-seq integration worflow
+Core code associated with manuscript from Kartha et al (preprint coming soon!) detailing scATAC and scRNA-seq integration worflow
 
 FigR is a computational framework for supporting the integration of single cell chromatin accessibility and gene expression data to infer transcriptional regulators of target genes
 
