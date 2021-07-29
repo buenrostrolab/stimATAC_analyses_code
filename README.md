@@ -1,6 +1,6 @@
 # Functional Inference of Gene Regulation (FigR)
 
-Core code associated with the approuch outlined in our [recent preprint](https://www.biorxiv.org/content/10.1101/2021.07.28.453784v1) detailing scATAC and scRNA-seq integration worflow
+Core code associated with the approach outlined in our [recent preprint](https://www.biorxiv.org/content/10.1101/2021.07.28.453784v1) detailing gene regulatory network inference using scATAC and scRNA-seq integration
 
 FigR is a computational framework for supporting the integration of single cell chromatin accessibility and gene expression data to infer transcriptional regulators of target genes
 
