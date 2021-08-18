@@ -315,279 +315,6 @@ get_pair_list <- function(cell_matches, # The output object of fullmatch or pair
   pair_df
 }
 
-# Vanilla Opt matching function (based on euclidean distance). Not used for current geodesic pairing implementation
-# By default, will return a data frame of pairs
-# Uses names of barcodes if present in input PC matrices (rownames)
-# Otherwise uses relative indices of input PC matrices
-optPair <- function(ATACpcs, # ATAC cells x PCs matrix (from CCA). Needs valid rownames
-                    RNApcs, # RNA cells x PCs matrix (from CCA). Needs valid rownames
-                    doPermutation=FALSE, # Test FDR on pair?
-                    returnDistMat=FALSE, # Return the sparse distance matrix used for matching?
-                    k=20, # k-NN parameter used for applying constraints on ATAC-RNA pairs
-                    distMat=NULL, # If you already computed ATAC x RNA distance (any type of distance)
-                    pairKNN=NULL, # If you've already computed ATAC x RNA, and RNA x ATAC KNNs (any way) in list
-                    nCores=1,
-                    sanityLoop=FALSE,
-                    forceSymmetry=TRUE # ATAC and RNA have to be same dimensions
-){
-
-
-  numATAC <- nrow(ATACpcs)
-  numRNA <- nrow(RNApcs)
-
-  if(forceSymmetry & numATAC!=numRNA){
-    message("forceSymmetry set to TRUE")
-    stop("Number of cells in both datasets needs to be the same ..\n")
-  }
-
-  if(is.null(rownames(ATACpcs)) | is.null(rownames(RNApcs))){
-    message("Input matrices missing rownames (cell IDs) to use .. Using relative index instead \n")
-    labelsExist <- FALSE # Use indices instead of cell IDs
-  } else {
-    labelsExist <- TRUE
-  }
-
-  time_elapsed <- Sys.time()
-
-  if(is.null(pairKNN)){
-    cat("Choosing min k required based on available neighbors and input parameter ..\n")
-    k <- min(k,c(numATAC,numRNA))
-
-    if(k > 300 | sanityLoop){
-      options("optmatch_max_problem_size" = Inf)
-      message("Warning: Very large k will lead to exceedingly large computation times .. \n")
-    }
-
-    cat("Getting knn graph between ATAC and RNA cells in PC space ..\n")
-    cat("Restricting to ",k, "nearest neighbors ..\n")
-    pairKNN12 <- FNN::get.knnx(data = RNApcs,query = ATACpcs,k =k)
-    pairKNN21 <- FNN::get.knnx(data = ATACpcs,query = RNApcs,k =k)
-
-    pairKNN <- list(ATAC=pairKNN12,RNA=pairKNN21)
-  } else {
-    cat("Using supplied KNN graph ..\n")
-    stopifnot(c("ATAC","RNA"))
-  }
-
-  if(!is.null(distMat)){
-    stopifnot(nrow(distMat)==numATAC & ncol(distMat)==numRNA)
-
-    cat("Using supplied distance matrix ..\n")
-
-    # Convert KNN to adjacency matrix
-    cat("Getting KNN adjacency matrix ..\n")
-    knn_adj_mtx <- array(0, dim = c(numATAC,numRNA))
-    for (i in 1:numATAC) knn_adj_mtx[i,pairKNN$ATAC[i,]] <- 1 # Match. Won't work for FNN returned KNN (no $nn.index)
-    for (i in 1:numRNA) knn_adj_mtx[pairKNN$RNA[i,],i] <- 1 # Match. Won't work for FNN returned KNN (no $nn.index)
-
-    # Scalar multiplication between matrices (will become 0 if not in union of KNNs)
-    distMat <- knn_adj_mtx * distMat
-
-    rownames(distMat) <- paste0("ATAC_",1:numATAC)
-    colnames(distMat) <- paste0("RNA_",1:numRNA)
-
-  } else {
-
-    if(sanityLoop){
-      # Make empty (sparse) matrix of ATAC (row) x RNA (col)
-      distMat <- Matrix(0,nrow = numATAC,ncol=numRNA,sparse=TRUE) # We will replace the 0's as Inf later
-
-      rownames(distMat) <- paste0("ATAC_",1:numATAC)
-      colnames(distMat) <- paste0("RNA_",1:numRNA)
-
-      # Update distances from knn graph only for nearest neighbors
-      # ATAC NNs first
-      cat("\nAssigning ATAC distances based on RNA NNs ..\n")
-      for(i in 1:numATAC){
-        distMat[i,pairKNN$ATAC$nn.index[i,]] <- pairKNN$ATAC$nn.dist[i,]
-      }
-      # RNA
-      cat("Assigning RNA distances based on ATAC NNs ..\n")
-      for(i in 1:numRNA){
-        distMat[pairKNN$RNA$nn.index[i,],i] <- pairKNN$RNA$nn.dist[i,]
-      }
-
-    } else {
-
-      # Parallelize
-      stopifnot(nCores < 10)
-      if(nCores > 1){
-        cat("Using ",nCores, " cores ..\n\n")
-
-        cat("\nAssigning distances based on ATAC - RNA NNs ..\n")
-
-        tmpMat.l <- parallel::mclapply(1:numATAC,function(x) {
-          vec <- rep(0,numRNA)
-          vec[pairKNN$ATAC$nn.index[x,]] <- pairKNN$ATAC$nn.dist[x,]
-          data.table::data.table(vec)
-        },mc.cores = nCores)
-
-        if(any(unlist(lapply(tmpMat.l,is.na))))
-          stop("One or more distances returned NAs. Check input matrices\n")
-        if(any(unlist(lapply(tmpMat.l,is.null))))
-          stop("One or more distances returned NULL. Check input matrices or for parallel failure\n")
-
-        tmpMat <- Matrix::t(dplyr::bind_cols(tmpMat.l) %>% data.matrix() %>%
-                              Matrix::Matrix(sparse=TRUE))
-
-        cat("Assigning distances based on RNA - ATAC NNs ..\n")
-
-        distMat.l <- parallel::mclapply(1:numRNA,function(x,M=tmpMat) {
-          vec <- as.numeric(M[,x])
-          vec[pairKNN$RNA$nn.index[x,]] <- pairKNN$RNA$nn.dist[x,]
-          data.table::data.table(vec)
-        },mc.cores = nCores)
-
-        if(any(unlist(lapply(distMat.l,is.na))))
-          stop("One or more distances returned NAs. Check input matrices\n")
-        if(any(unlist(lapply(distMat.l,is.null))))
-          stop("One or more distances returned NULL. Check input matrices or for parallel failure\n")
-
-        cat("Merging parallel chunks ..\n")
-        distMat <- dplyr::bind_cols(distMat.l) %>% data.matrix() %>%
-          Matrix::Matrix(sparse = TRUE)
-
-      } else {
-        # Use regular lapply
-        cat("\nAssigning distances based on ATAC - RNA NNs ..\n")
-
-        tmpMat.l <- lapply(1:numATAC,function(x) {
-          vec <- rep(0,numRNA)
-          vec[pairKNN$ATAC$nn.index[x,]] <- pairKNN$ATAC$nn.dist[x,]
-          data.table::data.table(vec)
-        })
-
-        if(sum(unlist(lapply(tmpMat.l,is.na)))!=0)
-          stop("One or more distances returned NAs. Check input matrices\n")
-
-        tmpMat <- Matrix::t(dplyr::bind_cols(tmpMat.l) %>% data.matrix() %>%
-                              Matrix::Matrix(sparse=TRUE))
-
-        cat("Assigning distances based on RNA - ATAC NNs ..\n")
-
-        distMat.l <- lapply(1:numRNA,function(x,M=tmpMat) {
-          vec <- as.numeric(M[,x])
-          vec[pairKNN$RNA$nn.index[x,]] <- pairKNN$RNA$nn.dist[x,]
-          data.table::data.table(vec)
-        })
-
-        if(sum(unlist(lapply(distMat.l,is.na)))!=0)
-          stop("One or more distances returned NAs. Check input or KNN matrices\n")
-
-        distMat <- dplyr::bind_cols(distMat.l) %>% data.matrix() %>%
-          Matrix::Matrix(sparse = TRUE)
-
-      } # End nCores 1 normal lapply
-      # For apply cases, assign row/colnames after
-      rownames(distMat) <- paste0("ATAC_",1:numATAC)
-      colnames(distMat) <- paste0("RNA_",1:numRNA)
-
-    } # End not sanity loop case
-  } # End if supplied own distance matrix
-
-  # Make 0 entries infinite (distance of invalid pairs)
-  distMat[distMat==0] <- Inf
-
-  cat("\nDeterming pairs through optimized bipartite matching ..\n")
-  myMatches <- suppressWarnings(optmatch::pairmatch(optmatch::as.InfinitySparseMatrix(as.matrix(distMat))))
-  myMatches <- sort(myMatches) # Sort to get ATAC, RNA tuples
-
-
-  if(length(myMatches)==0)
-    stop("Matches could not be found .. Perhaps try adjusting the constraints to allow optimal matching to be solved?\n")
-
-  if(any(is.na(myMatches)))
-    warning("NA pairs exist ..\n")
-
-
-  # Make sure pair groupings (factors) are adjacent
-  stopifnot(all.equal(myMatches[seq(1,length(myMatches),2)],myMatches[seq(2,length(myMatches),2)],check.attributes=FALSE))
-
-
-  # Sometimes this is arranged as RNA/ATAC instead of ATAC first
-  # Check which is first and fetch corresponding labels
-  ATACtups <- which(splitAndFetch(names(myMatches),"_",1) %in% "ATAC")[1]
-  RNAtups <- ifelse(ATACtups==1,2,1)
-
-  ATACp <- names(myMatches)[seq(ATACtups,length(myMatches),2)] # Names of ATAC cells
-  RNAp <- names(myMatches[seq(RNAtups,length(myMatches),2)]) # Names of RNA cells
-
-  # Checking if ATAC and RNA tuples are concordant
-  stopifnot(all(splitAndFetch(ATACp,"_",1) %in% "ATAC"))
-  stopifnot(all(splitAndFetch(RNAp,"_",1) %in% "RNA"))
-
-  # This is just to make sure 1-1, with the names we gave
-  # (can still comprise actual doublets from upsampling if any)
-  stopifnot(all.unique(ATACp) & all.unique(RNAp))
-
-  # Get corresponding index relative to input matrix order
-  ATACi <- as.numeric(splitAndFetch(ATACp,"_",2))
-  RNAi <- as.numeric(splitAndFetch(RNAp,"_",2))
-
-  myMatches.m <- matrix(c(ATACi,RNAi),ncol=2,byrow = FALSE) # ATAC col1, RNA col2
-
-  cost <- distMat[myMatches.m] # Fetches distance per ATAC/RNA pair (in corresponding pair order)
-
-
-  cat("Assembling pair list ..\n")
-  # Make data frame of matches
-
-  pairDF <- data.frame("ATAC"=ATACi,
-                       "RNA"=RNAi,
-                       "Distance"=cost)
-
-  cat("Finished!\n")
-  time_elapsed <- Sys.time() - time_elapsed
-
-  cat(paste("Total Run-time: ",round(time_elapsed,2),units(time_elapsed),"\n\n"))
-
-  permuted.distances <- c()
-  if(doPermutation){
-    cat("Running permutations ..\n")
-    numPerm <- 100
-    for(i in 1:numPerm){
-      set.seed(i)
-      cat("iteration ",i," ..\n")
-      permuted.distances <- cbind(permuted.distances,distMat[matrix(c(ATACi,sample(unique(c(pairKNN$ATAC$nn.index)),length(RNAi),replace = FALSE)),ncol=2,byrow = FALSE)]) # ATAC col1, RNA col2
-    }
-
-    perm_p <- rowSums(permuted.distances < cost) / numPerm
-    pairDF$perm_pval <- perm_p
-
-  }
-
-  pairDF <- pairDF %>% arrange(ATAC)
-
-  # Convert to labels if they exist
-  if(labelsExist){
-    pairDF$ATAC <- rownames(ATACpcs)[pairDF$ATAC] # ATAC cell labels
-    pairDF$RNA <- rownames(RNApcs)[pairDF$RNA] # RNA cell labels
-  }
-
-  # Assemble resulting list
-  pairList <- list()
-  pairList$pairs <- pairDF # Pair data frame
-  pairList$Kparam <- k # K NN param used
-
-  if(!labelsExist){
-    cat("% of RNA cell barcodes accounted for in match : ",round((sum(1:nrow(RNApcs) %in% pairList$pairs$RNA)/nrow(RNApcs)*100),2), "% \n")
-    cat("% of ATAC cell barcodes accounted for in match : ", round((sum(1:nrow(ATACpcs) %in% pairList$pairs$ATAC)/nrow(ATACpcs)*100),2), "% \n\n")
-  } else {
-    cat("% of RNA cell barcodes accounted for in match : ",round((sum(rownames(RNApcs) %in% pairList$pairs$RNA)/nrow(RNApcs)*100),2), "% \n")
-    cat("% of ATAC cell barcodes accounted for in match : ", round((sum(rownames(ATACpcs) %in% pairList$pairs$ATAC)/nrow(ATACpcs)*100),2), "% \n\n")
-  }
-
-  cat("Frequencies of RNA barcode supermatches : \n")
-  print(table(table(pairList$pairs$RNA)))
-
-  # Return the pairing and the sparse-ified distance matrix used as input to pairing, and the k param
-  if(returnDistMat)
-    pairList$dist <- distMat # Note this won't have the labels as row/column names since they might not be unique (just has "ATAC_1" etc.)
-
-  pairList
-
-}
-
 
 # Main matching function.
 # By default, will return a data frame of pairs
@@ -625,11 +352,11 @@ cell_pairing <- function(ATACpcs, # Input ATAC single cell PCs obtained from Run
 
   if (mode == "geodesic"){
     cat("\n\n")
-    print("Constructing KNN graph for computing geodesic distance")
+    cat("Constructing KNN graph for computing geodesic distance ..\n")
     # Get UMAP-based KNN graph
     knn_graph <- umap_knn_graph(all_pcs,k=umap_knn_k,seed = seed)
 
-    print("Computing graph-based geodesic distance")
+    cat("Computing graph-based geodesic distance ..\n")
     # Compute shortest paths between all cell pairs. We checked that this returns a symmetric matrix
     shortest_paths <- shortest.paths(knn_graph)
 
@@ -650,6 +377,7 @@ cell_pairing <- function(ATACpcs, # Input ATAC single cell PCs obtained from Run
 
 
     all_pairs <- NULL
+    
     #k_pairing <- 10 + n_cells * search_range
     #size_threshold <- k_pairing # Subgraphs with fewer nodes than this threshold would be skipped
 
@@ -747,159 +475,15 @@ cell_pairing <- function(ATACpcs, # Input ATAC single cell PCs obtained from Run
                                                            tol = tol,
                                                            min.controls = 1 / max_multimatch,
                                                            max.controls = max_multimatch))
-      cat("finished!\n")
-
       pair_list <- get_pair_list(cell_matches,
                                  rownames(subgraph_ATAC_pcs),
                                  rownames(subgraph_RNA_pcs))
 
+      cat("Finished!\n")
+      
       # Append the results for this subgraph to the list of all results
       all_pairs <- rbind(all_pairs, pair_list)
     }
-  }
-
-  if (mode == "optmatch"){
-    numATAC <- nrow(ATACpcs)
-    numRNA <- nrow(RNApcs)
-
-    # Re-sampling so that the numbers of RNA and ATAC cells are balanced
-    up.list <- smartUpSample(mat1=ATACpcs,mat2=RNApcs)
-    ATACpcs <- up.list[[1]]
-    RNApcs <- up.list[[2]]
-    numRNA <- dim(RNApcs)[1]
-    numATAC <- dim(ATACpcs)[1]
-
-    if(is.null(rownames(ATACpcs)) | is.null(rownames(RNApcs))){
-      message("Input matrices missing rownames (cell IDs) to use .. Using relative index instead \n")
-      labelsExist <- FALSE # Use indices instead of cell IDs
-    } else {
-      labelsExist <- TRUE
-    }
-
-    time_elapsed <- Sys.time()
-
-    cat("Choosing min k required based on available neighbors and input parameter ..\n")
-    k <- min(k,c(numATAC,numRNA))
-
-    if(k > 300 | sanityLoop){
-      options("optmatch_max_problem_size" = Inf)
-      message("Warning: Very large k will lead to exceedingly large computation times .. \n")
-    }
-    cat("Getting knn graph between ATAC and RNA cells in PC space ..\n")
-    cat("Restricting to ",k, "nearest neighbors ..\n")
-
-
-    pairKNN12 <- FNN::get.knnx(data = RNApcs,query = ATACpcs,k =k)
-    pairKNN21 <- FNN::get.knnx(data = ATACpcs,query = RNApcs,k =k)
-
-    pairKNN <- list(ATAC=pairKNN12,RNA=pairKNN21)
-
-    if(sanityLoop){
-      # Make empty (sparse) matrix of ATAC (row) x RNA (col)
-      distMat <- Matrix(0,nrow = numATAC,ncol=numRNA,sparse=TRUE) # We will replace the 0's as Inf later
-
-      rownames(distMat) <- paste0("ATAC_",1:numATAC)
-      colnames(distMat) <- paste0("RNA_",1:numRNA)
-
-      # Update distances from knn graph only for nearest neighbors
-      # ATAC NNs first
-      cat("\nAssigning ATAC distances based on RNA NNs ..\n")
-      for(i in 1:numATAC){
-        distMat[i,pairKNN$ATAC$nn.index[i,]] <- pairKNN$ATAC$nn.dist[i,]
-      }
-      # RNA
-      cat("Assigning RNA distances based on ATAC NNs ..\n")
-      for(i in 1:numRNA){
-        distMat[pairKNN$RNA$nn.index[i,],i] <- pairKNN$RNA$nn.dist[i,]
-      }
-
-    } else {
-
-      # Parallelize
-      stopifnot(nCores < 10)
-      if(nCores > 1){
-        cat("Using ",nCores, " cores ..\n\n")
-
-        cat("\nAssigning distances based on ATAC - RNA NNs ..\n")
-
-        tmpMat.l <- parallel::mclapply(1:numATAC,function(x) {
-          vec <- rep(0,numRNA)
-          vec[pairKNN$ATAC$nn.index[x,]] <- pairKNN$ATAC$nn.dist[x,]
-          data.table::data.table(vec)
-        },mc.cores = nCores)
-
-        if(any(unlist(lapply(tmpMat.l,is.na))))
-          stop("One or more distances returned NAs. Check input matrices\n")
-        if(any(unlist(lapply(tmpMat.l,is.null))))
-          stop("One or more distances returned NULL. Check input matrices or for parallel failure\n")
-
-        tmpMat <- Matrix::t(dplyr::bind_cols(tmpMat.l) %>% data.matrix() %>%
-                              Matrix::Matrix(sparse=TRUE))
-
-        cat("Assigning distances based on RNA - ATAC NNs ..\n")
-
-        distMat.l <- parallel::mclapply(1:numRNA,function(x,M=tmpMat) {
-          vec <- as.numeric(M[,x])
-          vec[pairKNN$RNA$nn.index[x,]] <- pairKNN$RNA$nn.dist[x,]
-          data.table::data.table(vec)
-        },mc.cores = nCores)
-
-        if(any(unlist(lapply(distMat.l,is.na))))
-          stop("One or more distances returned NAs. Check input matrices\n")
-        if(any(unlist(lapply(distMat.l,is.null))))
-          stop("One or more distances returned NULL. Check input matrices or for parallel failure\n")
-
-        distMat <- dplyr::bind_cols(distMat.l) %>% data.matrix() %>%
-          Matrix::Matrix(sparse = TRUE)
-
-      } else {
-        # Use regular lapply
-        cat("\nAssigning distances based on ATAC - RNA NNs ..\n")
-
-        tmpMat.l <- lapply(1:numATAC,function(x) {
-          vec <- rep(0,numRNA)
-          vec[pairKNN$ATAC$nn.index[x,]] <- pairKNN$ATAC$nn.dist[x,]
-          data.table::data.table(vec)
-        })
-
-        if(sum(unlist(lapply(tmpMat.l,is.na)))!=0)
-          stop("One or more distances returned NAs. Check input matrices\n")
-
-        tmpMat <- Matrix::t(dplyr::bind_cols(tmpMat.l) %>% data.matrix() %>%
-                              Matrix::Matrix(sparse=TRUE))
-
-        cat("Assigning distances based on RNA - ATAC NNs ..\n")
-
-        distMat.l <- lapply(1:numRNA,function(x,M=tmpMat) {
-          vec <- as.numeric(M[,x])
-          vec[pairKNN$RNA$nn.index[x,]] <- pairKNN$RNA$nn.dist[x,]
-          data.table::data.table(vec)
-        })
-
-        if(sum(unlist(lapply(distMat.l,is.na)))!=0)
-          stop("One or more distances returned NAs. Check input or KNN matrices\n")
-
-        distMat <- dplyr::bind_cols(distMat.l) %>% data.matrix() %>%
-          Matrix::Matrix(sparse = TRUE)
-
-      } # End nCores 1 normal lapply
-      # For apply cases, assign row/colnames after
-      rownames(distMat) <- paste0("ATAC_",1:numATAC)
-      colnames(distMat) <- paste0("RNA_",1:numRNA)
-
-    } # End not sanity loop case
-
-    # Make 0 entries infinite (distance of invalid pairs)
-    distMat[distMat==0] <- Inf
-
-    cat("\nDeterming pairs through optimized bipartite matching ..\n")
-    cell_matches <- suppressWarnings(optmatch::pairmatch(optmatch::as.InfinitySparseMatrix(as.matrix(distMat)), tol = tol))
-    print(numATAC)
-    print(numRNA)
-    print(dim(ATACpcs))
-    all_pairs <- get_pair_list(cell_matches,
-                               rownames(ATACpcs),
-                               rownames(RNApcs))
   }
 
   if (mode == "greedy"){
@@ -935,7 +519,8 @@ chunk_pair_geo <- function(ATACpcs,
     # Chunk up data (larger to smaller)
     chunkList <- chunk_CCA(CCA_1 = ATACpcs,CCA_2 = RNApcs,seed = 123)
 
-    # Chunk lists always returned as larger assay first, then smaller (list of two matrices)
+    # Chunk lists always returned with larger assay first, then smaller (list of two matrices)
+    # Match to input ATAC/RNA specification
     if(all(rownames(chunkList[[1]][[1]]) %in% rownames(ATACpcs) & !rownames(chunkList[[1]][[2]]) %in% rownames(ATACpcs))){
       ATAC.i <- 1
       RNA.i <- 2
