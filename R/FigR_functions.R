@@ -36,7 +36,7 @@ runFigR <- function(ATAC.se, # SE of scATAC peak counts. Needed for chromVAR bg 
   
   # Expects "Gene" / "Peak" in dorcTab
   if(!all(c("Peak","Gene") %in% colnames(dorcTab)))
-    stop("Expecting fields Peak and Gene in dorcTab data.frame .. see runGenePeakcorr function in BuenRTools")
+    stop("Expecting fields Peak and Gene in dorcTab data.frame .. see runGenePeakcorr function for more details")
   
   if(all(grepl("chr",dorcTab$Peak,ignore.case = TRUE))) {
     usePeakNames <- TRUE
@@ -137,7 +137,7 @@ runFigR <- function(ATAC.se, # SE of scATAC peak counts. Needed for chromVAR bg 
   doSNOW::registerDoSNOW(cl)
   mZtest.list <- foreach(g=dorcGenes,
                          .options.snow = opts, 
-                         .packages = c("BuenRTools", "dplyr","Matrix")) %dopar%   {
+                         .packages = c("dplyr","Matrix")) %dopar%   {
                            # Take peaks associated with gene and its k neighbors
                            # Pool and use union for motif enrichment
                            DORCNNpeaks <- unique(dorcTab$Peak[dorcTab$Gene %in% c(g,dorcGenes[DORC.knn[g,]])])
