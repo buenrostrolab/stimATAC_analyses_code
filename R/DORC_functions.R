@@ -381,3 +381,77 @@ dorcJplot <- function(dorcTab, # table returned from runGenePeakcorr function
   
   
 }
+
+# Function to calculate single cell DORC scores using scATAC-seq data and pre-determined peak-gene associations
+getDORCScores <- function(ATAC.se, # SummarizedExperiment of scATAC-seq data (exact same used as input to runGenePeakcorr function)
+                          dorcTab, # List of FILTERED peak-gene associations (e.g. after filtering for pvalZ <= 0.05 in the returned data.frame from runGenePeakcorr)
+                          normalizeATACmat=TRUE,
+                          geneList=NULL, # Here, you can provide your list of DORC genes, since you don't want to compute scores for all genes (which includes genes with too few peaks associated)
+                          nCores=4 # How many cores to use, if parallel support
+			  ){
+
+
+  if(!all(c("Peak","Gene") %in% colnames(dorcTab)))
+    stop("The provided gene-peak table must have columns named Peak and Gene ..")
+
+  if(any(dorcTab$Peak > nrow(ATAC.se)))
+    stop("One or more peak indices in the gene-peak table are larger than the total number of peaks in the provided ATAC SE object ..\n Make sure the exact same SummarizedExperiment object is provided here as was for running the runGenePeakcorr function ..\n")
+
+  if(!is.null(geneList)){
+    if(!(all(geneList %in% as.character(dorcTab$Gene))))
+      stop("One or more of the gene names supplied is not present in the gene-peak table provided..\n")
+
+    if(length(geneList) > 50){
+	    message("Running DORC scoring for ",length(geneList)," genes: ",paste(geneList[1:20],collapse=", "),", ... , ... , ... (truncated display)")
+    } else {
+      message("Running DORC scoring for ",length(geneList)," genes: ",paste(geneList,collapse = "\n"))
+    }
+
+    cat("........\n")
+
+    dorcTab <- dorcTab[dorcTab$Gene %in% geneList,] # Filter only to these genes
+    dorcGenes <- sort(as.character(unique(dorcTab$Gene)))
+  } else {
+    dorcGenes <- sort(as.character(unique(dorcTab$Gene)))
+    cat("Running DORC scoring for all genes in annotation! (n = ",length(dorcGenes),")\n",sep="")
+  }
+
+
+  if(normalizeATACmat){
+    # Normalize
+    cat("Normalizing scATAC counts ..\n")
+    ATAC.mat <- assay(centerCounts(ATAC.se,chunkSize = 5000))
+    gc()
+  } else {
+    cat("Assuming provided scATAC counts are normalized ..\n")
+    ATAC.mat <- assay(ATAC.se)
+  }
+
+  time_elapsed <- Sys.time()
+
+  cat("Computing DORC scores ..\n")
+  cat("Running in parallel using ", nCores, "cores ..\n")
+
+  dorcMatL <- pbmcapply::pbmclapply(X=dorcGenes,
+                                    FUN=function(x) {
+
+                                      dorcPeaks <- unique(dorcTab$Peak[dorcTab$Gene %in% x])
+
+                                      if(length(dorcPeaks) > 1) {
+                                        dorcCounts <- Matrix::colSums(ATAC.mat[dorcPeaks,])
+                                      } else if(length(dorcPeaks==1)) {
+                                        dorcCounts <- ATAC.mat[dorcPeaks,]
+                                      }
+                                    },mc.cores = nCores)
+
+  dorcMat <- Matrix(do.call('rbind',dorcMatL),sparse=TRUE)
+
+  rownames(dorcMat) <- dorcGenes
+
+  time_elapsed <- Sys.time() - time_elapsed
+  cat(paste("\nTime Elapsed: ",time_elapsed, units(time_elapsed)),"\n\n")
+
+  return(dorcMat)
+
+}
+
