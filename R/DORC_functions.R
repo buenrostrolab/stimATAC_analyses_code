@@ -70,7 +70,7 @@ PeakGeneCor <- function(ATAC, # Normalized reads in peaks counts (rownames shoul
   ends <- starts + chunkSize -1
   ends[length(ends)] <- n
   
-  OVd <- OV %>% as.data.frame() %>% rename("Gene"="queryHits","Peak"="subjectHits")
+  OVd <- OV %>% as.data.frame() %>% dplyr::rename("Gene"="queryHits","Peak"="subjectHits")
   
   chunkList <- mapply(c, starts, ends, SIMPLIFY = FALSE)
   
