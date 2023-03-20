@@ -29,7 +29,8 @@ runFigR <- function(ATAC.se, # SE of scATAC peak counts. Needed for chromVAR bg 
                     dorcMat, # Expect smoothed
                     rnaMat, # Expect smoothed
                     dorcGenes=NULL, # If only running on a subset of genes
-                    nCores=1
+                    nCores=1,
+                    pwm=NULL
 ){
   # Must be matched data
   stopifnot(all.equal(ncol(dorcMat),ncol(rnaMat)))
@@ -81,13 +82,6 @@ runFigR <- function(ATAC.se, # SE of scATAC peak counts. Needed for chromVAR bg 
     ATAC.se <- chromVAR::addGCBias(ATAC.se, genome = myGenome)
   }
   
-  if(grepl("hg",genome)){
-    #pwm <- chromVARmotifs::human_pwms_v2
-    pwm <- readRDS("./data/cisBP_human_pfms_2021.rds")
-  } else {
-    #pwm <- BuenRTools::mouse_pwms_v3
-    pwm <- readRDS("./data/cisBP_mouse_pfms_2021.rds")
-  }
   
   # Old motif naming convention
   if(all(grepl("_",names(pwm),fixed = TRUE)))
